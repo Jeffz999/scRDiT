@@ -72,16 +72,19 @@ def sample_batches(model, amount=1024, savepath: str = None, method='ddpm', sub_
 if __name__ == '__main__':
     # generating settings
     model_path = 'models/fibroblast_diffusion_ckpt.pt'
-    # model_path = 'models/malignant_diffusion_ckpt.pt'
-    sample_amount = 1024  # number of generated samples
-    method = 'ddim'  # use 'ddpm' or 'ddim'
-    save = 'results/fibroblast_samples'  # result savepath
-    acc_rate = 10
+    sample_amount = 1024
+    save = 'results/fibroblast_samples_dpm_solver' # New save path
     model_structure = Unet1d()
+    # Define the number of steps for the new sampler
+    inference_steps = 25
     # model_structure = DiT(depth=3)
 
     model = model_structure.to(args.device)
     model.load_state_dict(torch.load(model_path))
-    sub_seq = get_sub_time_seq(acc_rate)
+    
+    
+    diffusion = DiffusionGene(gene_size=args.gene_size, device=args.device)
 
-    sample_batches(model, amount=sample_amount, savepath=save, method=method, sub_time_seq=sub_seq, clamp=True)
+
+    generated_samples = diffusion.sample(model, n=sample_amount, num_inference_steps=inference_steps).to('cpu')
+    #np.save(save, generated_samples.numpy())
