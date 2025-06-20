@@ -62,8 +62,11 @@ def train_ddpm(args):
 
         for i, genes in enumerate(pbar):
             genes = genes.to(device)
-            t: torch.Tensor = diffusion.sample_timesteps(genes.shape[0]).to(device)
+            # --- UPDATED: Using the new scheduler's methods ---
+            t: torch.Tensor = diffusion.sample_timesteps(genes.shape[0])
             x_t, noise = diffusion.noise_genes(genes, t)
+            
+            # The model now also needs the timestep `t`
             predicted_noise = model(x_t, t)
             loss: torch.Tensor = mse(noise, predicted_noise)
 
@@ -87,6 +90,8 @@ def train_ddpm(args):
             if not os.path.exists(os.path.join("ckpts", args.run_name)):
                 os.makedirs(os.path.join("ckpts", args.run_name))
             torch.save(model.state_dict(), os.path.join("ckpts", args.run_name, f"{run_name}_epoch{epoch}.pt"))
+            if not os.path.exists(os.path.join("optim")):
+                os.makedirs(os.path.join("optim"))
             torch.save(optimizer.state_dict(), os.path.join("optim", f"{run_name}_AdamW.pt"))
     
     logging.info("Training finished.")

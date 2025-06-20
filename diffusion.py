@@ -8,7 +8,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=log
 
 
 class DiffusionGene:
-    def __init__(self, gene_size=2000, device="cuda"):
+    def __init__(self, gene_size=2000, device="cuda", shift=1.0):
         self.gene_size = gene_size
         self.device = device
 
@@ -21,12 +21,13 @@ class DiffusionGene:
             beta_schedule="linear",
             num_train_timesteps=1000,
             # For this model, which predicts noise (epsilon), this setting is standard.
-            prediction_type="epsilon"
+            prediction_type="epsilon",
+            # This corresponds to the "sigma_shift" in SD3's configs
+            trained_betas=None,
         )
 
-
     def noise_genes(self, x, t):
-        """add noise"""
+        """Add noise to the genes using the scheduler's method."""
         # x is the original data (genes)
         # t is the tensor of timesteps
         noise = torch.randn_like(x)
@@ -34,12 +35,8 @@ class DiffusionGene:
         return noisy_x, noise
 
     def sample_timesteps(self, n):
-        """
-        generate timesteps
-        :param n:
-        :return:
-        """
-        return torch.randint(low=1, high=self.scheduler.config.num_train_timesteps, size=(n,))
+        """Generate random timesteps for training."""
+        return torch.randint(low=0, high=self.scheduler.config.num_train_timesteps, size=(n,), device=self.device)
 
     def sample(self, model, n: int, num_inference_steps: int = 25):
         """
@@ -57,28 +54,26 @@ class DiffusionGene:
 
         # Set the number of inference steps. This is a key parameter for speed vs. quality.
         self.scheduler.set_timesteps(num_inference_steps)
-        timesteps = self.scheduler.timesteps
 
         # 1. Start with random noise
-        x = torch.randn((n, 1, self.gene_size)).to(self.device)
+        # The shape needs to match what the model expects: (batch, channels, sequence_length)
+        x = torch.randn((n, 1, self.gene_size), device=self.device)
+
         # The scheduler needs to scale the initial noise.
         x *= self.scheduler.init_noise_sigma
 
         with torch.no_grad():
             # 2. Denoising loop
-            for t in tqdm(timesteps):
-                # The model input needs to be on the correct device
-                t_tensor = torch.tensor([t]).to(self.device)
-
+            for t in tqdm(self.scheduler.timesteps):
                 # Predict the noise for the current noisy sample
-                predicted_noise = model(x, t_tensor)
+                predicted_noise = model(x, t)
 
                 # 3. Use the scheduler's `step` method to compute the previous sample
                 # This one line replaces the complex math of the old samplers.
                 x = self.scheduler.step(predicted_noise, t, x).prev_sample
 
         model.train()
-        return x
+        return x.cpu()
 
 if __name__ == '__main__':
     # Test code.
