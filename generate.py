@@ -22,7 +22,7 @@ def get_sub_time_seq(acc_rate: int):
     return sub_time_seq
 
 
-def sample_batches(model, amount=1024, savepath: str = None, method='ddpm', sub_time_seq: list = None, eta: float = 1.,
+def sample_batches(model, amount=1024, savepath: str = None, method='dpm', sub_time_seq: list = None, eta: float = 1.,
                    clamp=False):
     """
     Generate RNA-seq samples with trained model.
@@ -30,7 +30,7 @@ def sample_batches(model, amount=1024, savepath: str = None, method='ddpm', sub_
     :param model: model checkpoint's path.
     :param amount: sample size.
     :param savepath: where to save the samples.
-    :param method: choose 'ddpm' or 'ddim' to accelerate sampling.
+    :param method: choose 'dpm' or 'ddim' to accelerate sampling.
     :param sub_time_seq: send a sub-sequence of time step if you want to use DDIM. (should be a list)
     :param clamp: if true, erase all numbers less than zero from the generated sample to zero
     :return: None
@@ -42,7 +42,7 @@ def sample_batches(model, amount=1024, savepath: str = None, method='ddpm', sub_
     rest = amount % num
     for i in range(amount // num):
         print(f'generating batch {i + 1} ...')
-        if method == 'ddpm':
+        if method == 'dpm':
             batch = diffusion.sample(model, n=num, clamp=clamp).to('cpu')
         else:
             batch = diffusion.sample_ddim(model, n=num, eta=eta, sub_time_seq=sub_time_seq, clamp=clamp).to('cpu')
@@ -56,7 +56,7 @@ def sample_batches(model, amount=1024, savepath: str = None, method='ddpm', sub_
 
     if rest != 0:
         print(f'generating last {rest} samples ...')
-        if method == 'ddpm':
+        if method == 'dpm':
             batch = diffusion.sample(model, n=rest, clamp=clamp).to('cpu')
         else:
             batch = diffusion.sample_ddim(model, n=rest, eta=eta, sub_time_seq=sub_time_seq, clamp=clamp).to('cpu')

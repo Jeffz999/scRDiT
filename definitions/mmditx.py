@@ -1,3 +1,5 @@
+# FROM SD3.5 REPO
+
 ### This file contains impls for MM-DiT, the core model component of SD3
 
 import math

@@ -1,3 +1,6 @@
+# FROM SD3.5 REPO
+
+
 ### This file contains impls for underlying related models (CLIP, T5, etc)
 
 import logging
