@@ -8,9 +8,12 @@ import numpy as np
 
 from definitions.mmditx import RMSNorm, SwiGLUFeedForward, SelfAttention
 from definitions.other_impls import Mlp
+from functools import partial # --- NEW: Import partial ---
 
 
 def modulate(x, shift, scale):
+    if shift is None:
+        shift = torch.zeros_like(scale)
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
@@ -134,8 +137,8 @@ class DiTBlock(nn.Module):
         self.attn = SelfAttention(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm="rms")
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        approx_gelu = lambda: nn.GELU(approximate="tanh")
-        self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        approx_gelu = partial(nn.GELU, approximate="tanh")
+        self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(hidden_size, 6 * hidden_size, bias=True)

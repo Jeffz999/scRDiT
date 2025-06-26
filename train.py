@@ -72,6 +72,18 @@ def train_ddpm(args):
 
             optimizer.zero_grad()
             loss.backward()
+            
+            #grad check
+            total_norm = 0
+            for p in model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2) # Calculate L2 norm of the gradient
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+
+            print(f"Total Gradient Norm: {total_norm}")
+                        
+            
             optimizer.step()
 
             pbar.set_postfix(MSE=loss.item())

@@ -47,7 +47,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(
             in_features, hidden_features, bias=bias, dtype=dtype, device=device
         )
-        self.act = act_layer
+        self.act = act_layer()
         self.fc2 = nn.Linear(
             hidden_features, out_features, bias=bias, dtype=dtype, device=device
         )
