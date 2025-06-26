@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from time import time
 from typing import Optional
 
+from definitions.mmditx import SwiGLUFeedForward
+
 import math
 import numpy as np
 
@@ -126,10 +128,10 @@ def attention(q, k, v, heads):
 class Attention(nn.Module):
     """
     Attention module with optional Query-Key Normalization.
-    This version is designed to be more stable by applying LayerNorm
+    This version is designed to be more stable by applying RMSNorm (prev layernorm)
     to the entire Q and K projections.
     """
-    def __init__(self, dim, num_heads, qkv_bias=False, qk_norm=False):
+    def __init__(self, dim, num_heads, qkv_bias=False, qk_norm=False, eps=1e-6):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -139,10 +141,10 @@ class Attention(nn.Module):
         # Final projection layer
         self.proj = nn.Linear(dim, dim)
 
-        # Apply LayerNorm to Q and K projections if qk_norm is enabled
+        # Apply RMSNorm to Q and K projections if qk_norm is enabled
         if qk_norm:
-            self.q_norm = nn.LayerNorm(dim)
-            self.k_norm = nn.LayerNorm(dim)
+            self.q_norm = nn.RMSNorm(dim, eps)
+            self.k_norm = nn.RMSNorm(dim, eps)
         else:
             self.q_norm = nn.Identity()
             self.k_norm = nn.Identity()
@@ -166,29 +168,6 @@ class Attention(nn.Module):
         return x
 
 
-class SwiGLUFeedForward(nn.Module):
-    """
-    SwiGLU Feed-Forward Network from the Stable Diffusion 3 architecture.
-    """
-    def __init__(
-        self,
-        dim: int,
-        hidden_dim: int,
-        multiple_of: int = 256,
-    ):
-        super().__init__()
-        # Adjust hidden dimension based on SwiGLU architecture
-        hidden_dim = int(2 * hidden_dim / 3)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
-
-    def forward(self, x):
-        # Apply the SwiGLU activation: silu(w1(x)) * w3(x)
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
-
 
 class DiTBlock(nn.Module):
     """
@@ -196,16 +175,16 @@ class DiTBlock(nn.Module):
     This version is updated to resolve potential conflicts between adaLN and QK-Norm,
     and incorporates SwiGLU for the MLP layer.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, qk_norm=True):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, qk_norm=True, multiple=256):
         super().__init__()
-        self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm1 = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6) # RMSNorm faster while being just as good?
         # Use the new, corrected Attention class
         self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=qk_norm)
 
-        self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2 = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         # Use SwiGLU which has shown better performance in modern transformers
-        self.mlp = SwiGLUFeedForward(dim=hidden_size, hidden_dim=mlp_hidden_dim)
+        self.mlp = SwiGLUFeedForward(dim=hidden_size, hidden_dim=mlp_hidden_dim, multiple_of=multiple)
         
         # Modulation network for adaLN
         self.adaLN_modulation = nn.Sequential(
@@ -236,7 +215,7 @@ class FinalLayer(nn.Module):
     """
     def __init__(self, hidden_size, patch_size, out_channels):
         super().__init__()
-        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm_final = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, patch_size * out_channels, bias=True)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),

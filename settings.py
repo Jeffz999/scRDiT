@@ -17,10 +17,10 @@ args.run_name = 'malignant'
 
 # setting up model
 # args.model = Unet1d()
-args.model = DiT(depth=3)
+args.model = DiT(depth=6)
 
 args.epochs = 500  # epochs of training
-args.batch_size = 64  # depends on your GPU memory size
+args.batch_size = 128  # depends on your GPU memory size
 args.gene_size = 2000  # size of gene set
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 args.lr = 1e-6  # learning rate
