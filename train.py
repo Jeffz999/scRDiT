@@ -82,7 +82,7 @@ def train_ddpm(args):
             total_norm = total_norm ** 0.5
 
             print(f"Total Gradient Norm: {total_norm}")
-                        
+            logger.add_scalar("Gradient Norm", total_norm, global_step=epoch * l + i)            
             
             optimizer.step()
 
