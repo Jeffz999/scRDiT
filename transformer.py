@@ -41,9 +41,9 @@ class DropPath(nn.Module):
     """
     Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
     """
-    def __init__(self, drop_prob=None):
+    def __init__(self, drop_prob=0.0): # temp fix to appease typechecker
         super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
+        self.drop_prob: float = drop_prob
 
     def forward(self, x):
         return drop_path(x, self.drop_prob, self.training)

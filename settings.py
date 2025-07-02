@@ -17,7 +17,7 @@ args.run_name = 'malignant'
 
 # setting up model
 # args.model = Unet1d()
-args.model = DiT(depth=6)
+args.model = DiT(depth=12)
 
 args.epochs = 500  # epochs of training
 args.batch_size = 128  # depends on your GPU memory size
