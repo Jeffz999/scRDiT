@@ -6,3 +6,5 @@ runs/
 ckpts/
 
 optim/
+
+.vscode/

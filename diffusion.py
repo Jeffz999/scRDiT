@@ -45,7 +45,7 @@ class DiffusionGene:
 
         Args:
             model: The trained noise prediction model (Unet1d or DiT).
-            n: The number of samples to generate.
+            n: The number of samples to generate (batch size).
             num_inference_steps: How many steps to run the reverse diffusion.
                                  Fewer steps are much faster. (e.g., 20-50).
         """
@@ -64,12 +64,20 @@ class DiffusionGene:
 
         with torch.no_grad():
             # 2. Denoising loop
-            for t in tqdm(self.scheduler.timesteps):
-                # Predict the noise for the current noisy sample
-                predicted_noise = model(x, t)
+            for t in tqdm(self.scheduler.timesteps, desc="Sampling"):
+                # --- FIX START ---
+                # The model (both DiT and Unet) expects a batch of timesteps (N,),
+                # but the scheduler's loop provides a single scalar timestep.
+                # We need to expand the scalar `t` to a tensor of shape (N,)
+                # to match the batch size of `x`.
+                timestep_batch = torch.full((n,), t, device=self.device, dtype=torch.long)
 
-                # 3. Use the scheduler's `step` method to compute the previous sample
-                # This one line replaces the complex math of the old samplers.
+                # Predict the noise for the current noisy sample, using the batched timestep.
+                predicted_noise = model(x, timestep_batch)
+                # --- FIX END ---
+
+                # 3. Use the scheduler's `step` method to compute the previous sample.
+                # The scheduler's step function itself expects the scalar timestep `t`.
                 x = self.scheduler.step(predicted_noise, t, x).prev_sample
 
         model.train()
@@ -78,8 +86,14 @@ class DiffusionGene:
 if __name__ == '__main__':
     # Test code.
     diffusion = DiffusionGene()
-    model = Unet1d()
-    model.to('cuda')
-    X = diffusion.sample(model, 1)
+    # This will now work with either Unet1d or DiT
+    from transformer import DiT
+    model = DiT(depth=3, patch_size=10).to('cuda')
+    # model = Unet1d().to('cuda')
+
+    logging.info("Testing corrected sample method...")
+    X = diffusion.sample(model, n=4, num_inference_steps=10)
     X = X.to('cpu')
-    print(X.shape)
+    print("Sampled shape:", X.shape)
+    logging.info("Test complete. If no errors, the fix is working.")
+

@@ -5,7 +5,7 @@ from unet import Unet1d
 # Reset training parameters in this file.
 
 parser = argparse.ArgumentParser()
-args = parser.parse_args()
+args, unknown = parser.parse_known_args()
 
 # choose dataset
 # args.dataset_path = 'datasets/fibroblast_datas.npy'
