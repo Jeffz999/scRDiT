@@ -9,6 +9,6 @@ optim/
 
 .vscode/
 
-
+*.db
 
 job_output.txt
