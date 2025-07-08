@@ -12,3 +12,5 @@ optim/
 *.db
 
 job_output.txt
+
+job.slurm

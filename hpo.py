@@ -36,7 +36,7 @@ BATCH_SIZE = 128
 EPOCHS = 1000
 GENE_SIZE = 2000
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-SAVE_FREQUENCY = 50
+SAVE_FREQUENCY = 100
 
 
 def objective(trial: optuna.Trial, model_config_name: str) -> float:
@@ -50,7 +50,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     # --- 1. Suggest Hyperparameters ---
     # Optuna will now only optimize the learning rate.
-    lr = trial.suggest_float("lr", 5e-7, 1e-4, log=True)
+    lr = trial.suggest_float("lr", 5e-6, 1e-3, log=True)
     
     model_params = DIT_CONFIGS[model_config_name]
     
@@ -71,7 +71,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     
-    eta_min = lr * 1e-2
+    eta_min = lr * 5e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=eta_min)
     logging.info(f"  > Cosine Annealing LR from {lr:.2e} down to {eta_min:.2e}")
     
@@ -168,7 +168,7 @@ if __name__ == '__main__':
         # --- NEW: Use a lambda function to pass the fixed config to the objective ---
         study.optimize(
             lambda trial: objective(trial, model_config_name=selected_config),
-            n_trials=25,
+            n_trials=10,
             timeout=None
         )
         # --- END NEW ---

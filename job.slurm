@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --partition=a100q                 # Specify the partition a100q for a100
-#SBATCH --nodelist=sabercore-a100-002      # Request specific node
+#SBATCH --nodelist=sabercore-a100-001      # Request specific node
 #SBATCH --cpus-per-task=4                # Allocate 4 CPUs (adjust as needed)
-#SBATCH --time=90:00:00                   # Set a time limit of 1 hour
+#SBATCH --time=25:30:00                   # Set a time limit of 1 hour
 #SBATCH --job-name=ScRDiT_Exp_Train              # Name the job as "clinpreai"
 #SBATCH --output=job_output.txt    # Store logs in 'logs/' directory with Job ID
-#SBATCH --reservation=jeffz_1154
+#SBATCH --reservation=jeffz_1166
 
 source /cm/shared/apps/anaconda3/3.11/etc/profile.d/conda.sh
 conda activate dl1
