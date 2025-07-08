@@ -27,6 +27,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 DIT_CONFIGS = {
     "S_4": {"depth": 8, "hidden_size": 384, "patch_size": 4, "num_heads": 6},
     "S_8": {"depth": 8, "hidden_size": 384, "patch_size": 8, "num_heads": 6},
+    "B_4_S": {"depth": 8, "hidden_size": 768, "patch_size": 4, "num_heads": 12},
     "B_4": {"depth": 12, "hidden_size": 768, "patch_size": 4, "num_heads": 12},
     "B_8": {"depth": 12, "hidden_size": 768, "patch_size": 8, "num_heads": 12},
 }
