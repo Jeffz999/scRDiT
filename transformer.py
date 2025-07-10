@@ -1,52 +1,23 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from time import time
-from typing import Optional
-
-from definitions.mmditx import SwiGLUFeedForward
-
 import math
 import numpy as np
+
+from definitions.mmditx import SwiGLUFeedForward
 
 
 def modulate(x, shift, scale):
     """
     Applies adaptive instance normalization.
+    The shift operation is optional.
     """
-    # The shift operation is optional
     if shift is None:
         # If no shift is provided, create a zero tensor with the same shape as the scale tensor
         shift = torch.zeros_like(scale)
     # The modulation operation: scale the input x and then add the shift
     # scale is expanded to match the dimensions of x for element-wise multiplication
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
-
-
-def drop_path(x, drop_prob: float = 0., training: bool = False):
-    """
-    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
-    """
-    if drop_prob == 0. or not training:
-        return x
-    keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
-    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()  # binarize
-    output = x.div(keep_prob) * random_tensor
-    return output
-
-
-class DropPath(nn.Module):
-    """
-    Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
-    """
-    def __init__(self, drop_prob=0.0): # temp fix to appease typechecker
-        super(DropPath, self).__init__()
-        self.drop_prob: float = drop_prob
-
-    def forward(self, x):
-        return drop_path(x, self.drop_prob, self.training)
 
 
 class TimestepEmbedder(nn.Module):
@@ -107,105 +78,111 @@ class PatchEmbed(nn.Module):
         return x
 
 
-def attention(q, k, v, heads):
-    """
-    Convenience wrapper around PyTorch's scaled dot-product attention.
-    """
-    b, _, dim_head = q.shape
-    # Reshape q, k, v for multi-head attention
-    q, k, v = map(
-        lambda t: t.view(b, -1, heads, dim_head // heads).transpose(1, 2),
-        (q, k, v)
-    )
-    # Apply scaled dot product attention
-    out = F.scaled_dot_product_attention(
-        q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False
-    )
-    # Reshape output back to original dimensions
-    return out.transpose(1, 2).reshape(b, -1, dim_head)
-
-
 class Attention(nn.Module):
     """
-    Attention module with optional Query-Key Normalization.
-    This version is designed to be more stable by applying RMSNorm (prev layernorm)
-    to the entire Q and K projections.
+    --- NEW: Attention module with per-head Query-Key Normalization ---
+    This version correctly implements QK-Norm by normalizing each head's Q and K vectors
+    independently, which is more stable and aligned with modern implementations like SD3.
     """
-    def __init__(self, dim, num_heads, qkv_bias=False, qk_norm=False, eps=1e-6):
+    def __init__(self, dim, num_heads, qkv_bias=True, eps=1e-6):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+        assert self.head_dim * num_heads == dim, "dim must be divisible by num_heads"
 
         # Linear layer to project input to Q, K, V
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         # Final projection layer
         self.proj = nn.Linear(dim, dim)
 
-        # Apply RMSNorm to Q and K projections if qk_norm is enabled
-        if qk_norm:
-            self.q_norm = nn.RMSNorm(dim, eps)
-            self.k_norm = nn.RMSNorm(dim, eps)
-        else:
-            self.q_norm = nn.Identity()
-            self.k_norm = nn.Identity()
+        # --- NEW: Per-head QK-Norm using RMSNorm ---
+        # These normalization layers operate on the head_dim, not the full model dim.
+        self.q_norm = nn.RMSNorm(self.head_dim, eps=eps, elementwise_affine=True)
+        self.k_norm = nn.RMSNorm(self.head_dim, eps=eps, elementwise_affine=True)
 
-    def forward(self, x):
+    def forward(self, x, log_stats=False, writer=None, global_step=None, prefix=""):
         B, L, C = x.shape
+        # 1. Project to Q, K, V
+        qkv = self.qkv(x)
 
-        # 1. Project to Q, K, V and split
-        qkv = self.qkv(x).chunk(3, dim=-1)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # 2. Reshape for multi-head attention and split
+        # (B, L, 3 * C) -> (B, L, 3, num_heads, head_dim) -> 3x (B, L, num_heads, head_dim)
+        q, k, v = qkv.reshape(B, L, 3, self.num_heads, self.head_dim).chunk(3, dim=2)
+        q, k, v = q.squeeze(2), k.squeeze(2), v.squeeze(2)
 
-        # 2. Apply QK Norm (the corrected approach)
+        # 3. --- NEW: Apply QK-Norm *per head* ---
+        # The RMSNorm is applied to the last dimension, which is `head_dim`.
         q = self.q_norm(q)
         k = self.k_norm(k)
 
-        # 3. Perform attention using the helper function
-        x = attention(q, k, v, self.num_heads)
+        # --- NEW: Extensive monitoring ---
+        if log_stats and writer:
+            writer.add_scalar(f'{prefix}/q_norm_val', q.norm(dim=-1).mean(), global_step)
+            writer.add_scalar(f'{prefix}/k_norm_val', k.norm(dim=-1).mean(), global_step)
+            writer.add_scalar(f'{prefix}/v_val_norm', v.norm(dim=-1).mean(), global_step)
 
-        # 4. Final projection
+        # 4. Transpose for scaled_dot_product_attention's expected input
+        # (B, L, num_heads, head_dim) -> (B, num_heads, L, head_dim)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        # 5. Scaled dot-product attention
+        attn_output = F.scaled_dot_product_attention(q, k, v)
+
+        # 6. Reshape back to (B, L, C)
+        x = attn_output.transpose(1, 2).reshape(B, L, C)
+
+        # 7. Final projection
         x = self.proj(x)
-        return x
 
+        if log_stats and writer:
+            writer.add_scalar(f'{prefix}/attn_output_norm', x.norm(dim=-1).mean(), global_step)
+
+        return x
 
 
 class DiTBlock(nn.Module):
     """
     A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
-    This version is updated to resolve potential conflicts between adaLN and QK-Norm,
-    and incorporates SwiGLU for the MLP layer.
     """
-    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, qk_norm=True, multiple=256):
+    def __init__(self, hidden_size, num_heads, mlp_ratio=4.0, multiple=256):
         super().__init__()
-        self.norm1 = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6) # RMSNorm faster while being just as good?
+        self.norm1 = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         # Use the new, corrected Attention class
-        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=qk_norm)
-
+        self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True)
         self.norm2 = nn.RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        # Use SwiGLU which has shown better performance in modern transformers
         self.mlp = SwiGLUFeedForward(dim=hidden_size, hidden_dim=mlp_hidden_dim, multiple_of=multiple)
-        
-        # Modulation network for adaLN
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
-    def forward(self, x, c):
+    def forward(self, x, c, log_stats=False, writer=None, global_step=None, prefix=""):
         # Generate modulation parameters from the conditioning signal
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
 
+        # --- NEW: Extensive monitoring for modulation parameters ---
+        if log_stats and writer:
+            with torch.no_grad():
+                writer.add_scalar(f'{prefix}/gate_msa_norm', gate_msa.norm(dim=-1).mean(), global_step)
+                writer.add_scalar(f'{prefix}/gate_mlp_norm', gate_mlp.norm(dim=-1).mean(), global_step)
+                writer.add_scalar(f'{prefix}/scale_msa_norm', scale_msa.norm(dim=-1).mean(), global_step)
+                writer.add_scalar(f'{prefix}/scale_mlp_norm', scale_mlp.norm(dim=-1).mean(), global_step)
+                writer.add_scalar(f'{prefix}/shift_msa_norm', shift_msa.norm(dim=-1).mean(), global_step)
+                writer.add_scalar(f'{prefix}/shift_mlp_norm', shift_mlp.norm(dim=-1).mean(), global_step)
+
         # Attention block with modulation
         modulated_input = modulate(self.norm1(x), shift_msa, scale_msa)
-        attn_output = self.attn(modulated_input)
+        attn_output = self.attn(modulated_input, log_stats, writer, global_step, prefix=f"{prefix}/Attention")
         x = x + gate_msa.unsqueeze(1) * attn_output
 
         # MLP block with modulation
         modulated_mlp_input = modulate(self.norm2(x), shift_mlp, scale_mlp)
         mlp_output = self.mlp(modulated_mlp_input)
         x = x + gate_mlp.unsqueeze(1) * mlp_output
-        
+
         return x
 
 
@@ -256,13 +233,17 @@ class DiT(nn.Module):
         num_patches = self.x_embedder.num_patches
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
-        # The core of the model: a sequence of DiTBlocks
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio, qk_norm=True) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
-        
+
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
+
+        # --- NEW: Attributes for logging ---
+        self.log_stats = False
+        self.writer = None
+        self.global_step = 0
 
     def initialize_weights(self):
         def _basic_init(module):
@@ -284,16 +265,18 @@ class DiT(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
         for block in self.blocks:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            # --- NEW: Implement adaLN-Gaussian initialization ---
+            # Initialize the final layer of the modulation network to be close to zero,
+            # but not exactly zero. This "soft" identity initialization can improve training
+            # stability and performance, as suggested by recent research.
+            nn.init.normal_(block.adaLN_modulation[-1].weight, mean=0, std=1e-5)
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-        # --- FIX: Use a proper initialization for the final layer ---
+        # Final layer initialization: initialize modulation to be identity
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        # Instead of zero-initializing, use Xavier uniform for the final linear layer
-        torch.nn.init.xavier_uniform_(self.final_layer.linear.weight)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
-
 
     def unpatchify(self, x):
         """
@@ -302,7 +285,7 @@ class DiT(nn.Module):
         """
         c = self.out_channels
         p = self.patch_size
-        l_p = self.x_embedder.num_patches  # Number of patches
+        l_p = self.x_embedder.num_patches
         assert l_p == x.shape[1]
 
         x = x.reshape(shape=(x.shape[0], l_p, p, c))
@@ -318,8 +301,15 @@ class DiT(nn.Module):
         """
         x = self.x_embedder(x) + self.pos_embed
         c = self.t_embedder(t)
-        for block in self.blocks:
-            x = block(x, c)
+
+        # --- NEW: Log conditioning vector norm ---
+        if self.log_stats and self.writer:
+            with torch.no_grad():
+                self.writer.add_scalar('Stats/Cond_Norm', c.norm(dim=-1).mean(), self.global_step)
+
+        for i, block in enumerate(self.blocks):
+            x = block(x, c, self.log_stats, self.writer, self.global_step, prefix=f"Stats/Block_{i}")
+
         x = self.final_layer(x, c)
         x = self.unpatchify(x)
         return x
@@ -359,12 +349,25 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
 
 if __name__ == '__main__':
     # Test code.
-    t = torch.randint(0, 1000, (16,))
-    x = torch.randn((16, 1, 2000))
-    dit = DiT(depth=12, hidden_size=768, patch_size=10, num_heads=12)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    t = torch.randint(0, 1000, (16,)).to(device)
+    x = torch.randn((16, 1, 2000)).to(device)
+    dit = DiT(depth=12, hidden_size=768, patch_size=10, num_heads=12).to(device)
+    
+    # --- Test new logging ---
+    from torch.utils.tensorboard import SummaryWriter
+    writer = SummaryWriter("runs/test_run")
+    dit.log_stats = True
+    dit.writer = writer
+    dit.global_step = 0
+    # --- End test ---
+
     out = dit(x, t)
-    print(out.shape)
+    print("Output shape:", out.shape)
     
     # Check parameter count
     num_params = sum(p.numel() for p in dit.parameters())
     print(f"Total parameters: {num_params:,}")
+    
+    writer.close()
+    print("Test complete. Check the 'runs/test_run' directory for TensorBoard logs.")
