@@ -16,6 +16,9 @@ import argparse
 from loader import cell_dataloader
 from diffusion import DiffusionGene
 from transformer import DiT
+from settings import args
+
+use_amp = True
 
 # --- Configure Logging ---
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
@@ -27,17 +30,18 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 DIT_CONFIGS = {
     "S_4": {"depth": 8, "hidden_size": 384, "patch_size": 4, "num_heads": 6},
     "S_8": {"depth": 8, "hidden_size": 384, "patch_size": 8, "num_heads": 6},
+    "SCan_5": {"depth": 8, "hidden_size": 768, "patch_size": 5, "num_heads": 8},
     "B_4_S": {"depth": 8, "hidden_size": 768, "patch_size": 4, "num_heads": 12},
     "B_4": {"depth": 12, "hidden_size": 768, "patch_size": 4, "num_heads": 12},
     "B_8": {"depth": 12, "hidden_size": 768, "patch_size": 8, "num_heads": 12},
 }
 
 # --- Fixed Parameters ---
-BATCH_SIZE = 128
-EPOCHS = 1000
-GENE_SIZE = 2000
+BATCH_SIZE = args.batch_size
+EPOCHS = args.epochs
+GENE_SIZE = args.gene_size
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-SAVE_FREQUENCY = 100
+SAVE_FREQUENCY = 200
 
 
 def objective(trial: optuna.Trial, model_config_name: str) -> float:
@@ -69,10 +73,15 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
         depth=model_params['depth'],
         num_heads=model_params['num_heads'],
     ).to(DEVICE)
+    
+    print(f"Num parameters in model: {sum(p.numel() for p in model.parameters())}")
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     
-    eta_min = lr * 5e-2
+    scaler = torch.amp.GradScaler("cuda" ,enabled=use_amp)
+    logging.info("Using Automatic Mixed Precision (AMP).")
+    
+    eta_min = lr * 2e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=eta_min)
     logging.info(f"  > Cosine Annealing LR from {lr:.2e} down to {eta_min:.2e}")
     
@@ -97,12 +106,14 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
             t = diffusion.sample_timesteps(genes.shape[0])
             x_t, noise = diffusion.noise_genes(genes, t)
             
-            predicted_noise = model(x_t, t)
-            loss = mse(noise, predicted_noise)
+            with torch.amp.autocast(device_type=DEVICE, dtype=torch.float16, enabled=use_amp):
+                predicted_noise = model(x_t, t)
+                loss: torch.Tensor = mse(noise, predicted_noise)
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             pbar.set_postfix(MSE=loss.item())
             writer.add_scalar("Loss/Step_MSE", loss.item(), global_step=epoch * l + i)
