@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn as nn
-from torch import optim
+from torch import optim, amp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -78,7 +78,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     
-    scaler = torch.amp.GradScaler("cuda" ,enabled=use_amp)
+    scaler = amp.GradScaler("cuda" ,enabled=use_amp)
     logging.info("Using Automatic Mixed Precision (AMP).")
     
     eta_min = lr * 2e-2
@@ -106,7 +106,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
             t = diffusion.sample_timesteps(genes.shape[0])
             x_t, noise = diffusion.noise_genes(genes, t)
             
-            with torch.amp.autocast(device_type=DEVICE, dtype=torch.float16, enabled=use_amp):
+            with amp.autocast(device_type=DEVICE, dtype=torch.float16, enabled=use_amp):
                 predicted_noise = model(x_t, t)
                 loss: torch.Tensor = mse(noise, predicted_noise)
 
@@ -137,7 +137,15 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
             ckpt_dir = os.path.join("ckpts", "hpo", model_config_name, run_name)
             os.makedirs(ckpt_dir, exist_ok=True)
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")
-            torch.save(model.state_dict(), ckpt_path)
+            checkpoint = {
+                'epoch': epoch,
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
+                'scaler': scaler.state_dict()
+            }
+            torch.save(checkpoint, ckpt_path)
+            logging.info(f"Saved resumable checkpoint to {ckpt_path}")
 
     writer.close()
     logging.info(f"--- Trial {trial.number} Finished. Final Avg Loss: {avg_epoch_loss:.6f} ---")
