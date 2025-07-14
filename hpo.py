@@ -55,7 +55,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     # --- 1. Suggest Hyperparameters ---
     # Optuna will now only optimize the learning rate.
-    lr = trial.suggest_float("lr", 5e-6, 1e-3, log=True)
+    lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
     
     model_params = DIT_CONFIGS[model_config_name]
     
@@ -133,7 +133,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
             raise TrialPruned()
 
         # --- 5. Checkpointing ---
-        if (epoch + 1) % SAVE_FREQUENCY == 0:
+        if (epoch + 1) % SAVE_FREQUENCY == 0 or epoch == EPOCHS - 1:
             ckpt_dir = os.path.join("ckpts", "hpo", model_config_name, run_name)
             os.makedirs(ckpt_dir, exist_ok=True)
             ckpt_path = os.path.join(ckpt_dir, f"ckpt_epoch{epoch}.pt")

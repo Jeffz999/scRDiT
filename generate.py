@@ -1,90 +1,86 @@
-from unet import Unet1d
+import os
+import torch
 from diffusion import DiffusionGene
 from settings import args
 import numpy as np
-import torch
 from transformer import DiT
+from unet import Unet1d
+import logging
 
+# Configure logging
+logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
-# Run this file to generate RNA-seq samples.
-# Reset savepath and other parameters in this file (bottom).
-
-
-def get_sub_time_seq(acc_rate: int):
+def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.Module, amount: int, inference_steps: int):
     """
-    We offer an example of generating timestep subsequences here.
-    You can edit this function or write another function to generate different subsequences.
-    :param acc_rate: accelerate rate. (int)
-    :return: timestep subsequence. (list)
-    """
-    sub_time_seq = [i for i in range(0, 1001, acc_rate)]
-    sub_time_seq.insert(1, 1)
-    return sub_time_seq
+    Generates and saves synthetic gene expression data using a trained model.
 
-
-def sample_batches(model, amount=1024, savepath: str = None, method='dpm', sub_time_seq: list = None, eta: float = 1.,
-                   clamp=False):
+    Args:
+        model_path (str): Path to the trained model checkpoint (.pt file).
+        save_path (str): Path to save the generated samples (.npy file).
+        model_structure (torch.nn.Module): The model architecture (e.g., DiT(), Unet1d()).
+        amount (int): The number of samples to generate.
+        inference_steps (int): The number of steps for the DPM-Solver.
     """
-    Generate RNA-seq samples with trained model.
-    If you want to generate RNA-seq data with a minimum value of zero (no negative values), set clamp to True.
-    :param model: model checkpoint's path.
-    :param amount: sample size.
-    :param savepath: where to save the samples.
-    :param method: choose 'dpm' or 'ddim' to accelerate sampling.
-    :param sub_time_seq: send a sub-sequence of time step if you want to use DDIM. (should be a list)
-    :param clamp: if true, erase all numbers less than zero from the generated sample to zero
-    :return: None
-    """
+    logging.info(f"Loading model from: {model_path}")
     device = args.device
-    num = args.batch_size
-    diffusion = DiffusionGene(gene_size=args.gene_size, device=device)
-    batches = None
-    rest = amount % num
-    for i in range(amount // num):
-        print(f'generating batch {i + 1} ...')
-        if method == 'dpm':
-            batch = diffusion.sample(model, n=num, clamp=clamp).to('cpu')
-        else:
-            batch = diffusion.sample_ddim(model, n=num, eta=eta, sub_time_seq=sub_time_seq, clamp=clamp).to('cpu')
-        if batches is None:
-            batches = batch
-        else:
-            batches = torch.cat((batches, batch), dim=0)
-        print(batches.shape)
-        if savepath:
-            np.save(savepath, batches.numpy())
 
-    if rest != 0:
-        print(f'generating last {rest} samples ...')
-        if method == 'dpm':
-            batch = diffusion.sample(model, n=rest, clamp=clamp).to('cpu')
-        else:
-            batch = diffusion.sample_ddim(model, n=rest, eta=eta, sub_time_seq=sub_time_seq, clamp=clamp).to('cpu')
-        if batches is None:
-            batches = batch
-        else:
-            batches = torch.cat((batches, batch), dim=0)
-        print(batches.shape)
-        if savepath:
-            np.save(savepath, batches.numpy())
+    # Load the model structure and move it to the correct device
+    model = model_structure.to(device)
+    
+    # Load the entire checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # --- IMPORTANT: Load the EMA weights for best generation quality ---
+    if 'ema' in checkpoint:
+        logging.info("Found EMA weights in checkpoint. Loading them into the model.")
+        model.load_state_dict(checkpoint['ema'])
+    else:
+        # Fallback for older checkpoints that only saved the main model
+        logging.warning("EMA weights not found. Loading main model weights. For best results, use checkpoints from EMA-enabled training.")
+        model.load_state_dict(checkpoint['model'] if 'model' in checkpoint else checkpoint)
+    
+    model.eval()
+
+    diffusion = DiffusionGene(gene_size=args.gene_size, device=device)
+
+    logging.info(f"Generating {amount} samples with {inference_steps} inference steps...")
+    with torch.no_grad():
+        generated_samples = diffusion.sample(model, n=amount, num_inference_steps=inference_steps)
+    
+    # Squeeze the channel dimension before saving
+    generated_samples = generated_samples.squeeze(1).cpu().numpy()
+
+    # Ensure the directory for the save_path exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    logging.info(f"Saving {generated_samples.shape[0]} samples to {save_path}")
+    np.save(save_path, generated_samples)
+    logging.info("Generation complete.")
 
 
 if __name__ == '__main__':
-    # generating settings
-    model_path = 'models/fibroblast_diffusion_ckpt.pt'
-    sample_amount = 1024
-    save = 'results/fibroblast_samples_dpm_solver' # New save path
-    model_structure = Unet1d()
-    # Define the number of steps for the new sampler
-    inference_steps = 25
-    # model_structure = DiT(depth=3)
+    # === Configuration ===
+    # 1. Set the path to your trained model checkpoint
+    # This should be a .pt file from your "ckpts/your_run_name/" directory
+    model_checkpoint_path = 'ckpts/hpo/SCan_5/trial_9/ckpt_epoch799.pt'
 
-    model = model_structure.to(args.device)
-    model.load_state_dict(torch.load(model_path))
-    
-    
-    diffusion = DiffusionGene(gene_size=args.gene_size, device=args.device)
+    # 2. Set the path where you want to save the generated samples
+    output_save_path = 'results/generated_hpo_malignant_samples.npy'
 
+    # 3. Choose the model structure that matches your checkpoint
+    # This must be the same as the one used during training.
+    model_architecture = args.model
+    # model_architecture = Unet1d()
 
-    generated_samples = diffusion.sample(model, n=sample_amount, num_inference_steps=inference_steps).to('cpu')
-    #np.save(save, generated_samples.numpy())
+    # 4. Set the number of samples and inference steps
+    num_samples_to_generate = 1024
+    dpm_solver_steps = 30
+    # =====================
+
+    generate_samples(
+        model_path=model_checkpoint_path,
+        save_path=output_save_path,
+        model_structure=model_architecture,
+        amount=num_samples_to_generate,
+        inference_steps=dpm_solver_steps
+    )
