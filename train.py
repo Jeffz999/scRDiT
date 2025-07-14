@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from torch import optim
+from torch import optim, amp
 from settings import args
 from typing import List
 import logging
@@ -15,9 +15,36 @@ from collections import OrderedDict
 
 # Run this file to train your model.
 # Change training parameters in settings.py.
+use_amp = True
 
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
+
+def save_checkpoint(model, ema_model, optimizer, scaler, epoch_label, run_name):
+    """
+    Saves a checkpoint of the model and training state.
+
+    Args:
+        model (nn.Module): The main model.
+        ema_model (nn.Module): The Exponential Moving Average model.
+        optimizer (optim.Optimizer): The optimizer.
+        scaler (amp.GradScaler): The gradient scaler for AMP.
+        epoch_label (Union[int, str]): The label for the checkpoint file (e.g., 99 or "final").
+        run_name (str): The name of the current run.
+    """
+    logging.info(f"Saving checkpoint for label: {epoch_label}...")
+    ckpt_dir = os.path.join("ckpts", run_name)
+    os.makedirs(ckpt_dir, exist_ok=True)
+    
+    checkpoint = {
+        "model": model.state_dict(),
+        "ema": ema_model.state_dict(),
+        "opt": optimizer.state_dict(),
+        "scaler": scaler.state_dict()
+    }
+    ckpt_path = os.path.join(ckpt_dir, f"{run_name}_epoch{epoch_label}.pt")
+    torch.save(checkpoint, ckpt_path)
+    logging.info(f"Checkpoint saved to {ckpt_path}")
 
 @torch.no_grad()
 def update_ema(ema_model: nn.Module, model: nn.Module, decay=0.999):
@@ -64,6 +91,9 @@ def train_ddpm(args):
     lr = args.lr
     optimizer: optim.Optimizer = optim.AdamW(model.parameters(), lr=lr)
     mse: nn.MSELoss = nn.MSELoss()
+    
+    scaler = amp.GradScaler("cuda", enabled=use_amp)
+    logging.info(f"Automatic Mixed Precision (AMP) {'enabled' if use_amp else 'disabled'}.")
     
     eta_min = lr * 2e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=eta_min)
@@ -137,11 +167,12 @@ def train_ddpm(args):
             if hasattr(model, 'global_step'):
                 model.global_step = epoch * l + i
 
-            predicted_noise = model(x_t, t)
-            loss: torch.Tensor = mse(noise, predicted_noise)
+            with amp.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
+                predicted_noise = model(x_t, t)
+                loss: torch.Tensor = mse(noise, predicted_noise)
 
             optimizer.zero_grad()
-            loss.backward()
+            scaler.scale(loss).backward()
             
             # --- Monitor gradient norm ---
             total_norm = 0
@@ -151,8 +182,9 @@ def train_ddpm(args):
                     total_norm += param_norm.item() ** 2
             total_norm = total_norm ** 0.5
             
-            optimizer.step()
-
+            scaler.step(optimizer)
+            scaler.update()
+            
             # --- EMA Implementation: Update EMA model after each step ---
             update_ema(ema_model, model)
 
@@ -171,21 +203,10 @@ def train_ddpm(args):
 
         # --- EMA Implementation: Modified Checkpoint Saving ---
         if (epoch + 1) % args.save_frequency == 0:
-            logging.info(f"Saving checkpoint at epoch {epoch+1}...")
-            ckpt_dir = os.path.join("ckpts", args.run_name)
-            os.makedirs(ckpt_dir, exist_ok=True)
-            
-            # Save model, EMA model, and optimizer in a single dictionary
-            checkpoint = {
-                "model": model.state_dict(),
-                "ema": ema_model.state_dict(),
-                "opt": optimizer.state_dict(),
-            }
-            ckpt_path = os.path.join(ckpt_dir, f"{run_name}_epoch{epoch}.pt")
-            torch.save(checkpoint, ckpt_path)
-            logging.info(f"Checkpoint saved to {ckpt_path}")
+            save_checkpoint(model, ema_model, optimizer, scaler, epoch, run_name)
     
     logging.info("Training finished.")
+    save_checkpoint(model, ema_model, optimizer, scaler, "final", run_name)
     logger.close()
 
 if __name__ == '__main__':

@@ -78,7 +78,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     
-    scaler = amp.GradScaler("cuda" ,enabled=use_amp)
+    scaler = amp.GradScaler("cuda", enabled=use_amp)
     logging.info("Using Automatic Mixed Precision (AMP).")
     
     eta_min = lr * 2e-2
