@@ -19,6 +19,7 @@ from transformer import DiT
 from settings import args
 
 use_amp = True
+use_amp_scaler = False
 
 # --- Configure Logging ---
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
@@ -57,6 +58,8 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
     # Optuna will now only optimize the learning rate.
     lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
     
+    max_norm = trial.suggest_float("max_norm", 0.5, 10.0, log=True)
+    
     model_params = DIT_CONFIGS[model_config_name]
     
     logging.info(f"  > Learning Rate: {lr:.2e}")
@@ -78,10 +81,12 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     
-    scaler = amp.GradScaler("cuda", enabled=use_amp)
+    scaler = amp.GradScaler("cuda", enabled=use_amp_scaler)
     logging.info("Using Automatic Mixed Precision (AMP).")
+    logging.info(f"Automatic Mixed Precision (AMP) Scaler {'enabled' if use_amp_scaler else 'disabled'}.")
+
     
-    eta_min = lr * 2e-2
+    eta_min = lr * 1e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=eta_min)
     logging.info(f"  > Cosine Annealing LR from {lr:.2e} down to {eta_min:.2e}")
     
@@ -106,12 +111,16 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
             t = diffusion.sample_timesteps(genes.shape[0])
             x_t, noise = diffusion.noise_genes(genes, t)
             
-            with amp.autocast(device_type=DEVICE, dtype=torch.float16, enabled=use_amp):
+            with amp.autocast(device_type=DEVICE, dtype=torch.bfloat16, enabled=use_amp):
                 predicted_noise = model(x_t, t)
                 loss: torch.Tensor = mse(noise, predicted_noise)
 
             optimizer.zero_grad()
             scaler.scale(loss).backward()
+            
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            
             scaler.step(optimizer)
             scaler.update()
 

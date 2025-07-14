@@ -16,6 +16,8 @@ from collections import OrderedDict
 # Run this file to train your model.
 # Change training parameters in settings.py.
 use_amp = True
+use_amp_scaler = False
+max_norm = 2.0
 
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
@@ -92,8 +94,9 @@ def train_ddpm(args):
     optimizer: optim.Optimizer = optim.AdamW(model.parameters(), lr=lr)
     mse: nn.MSELoss = nn.MSELoss()
     
-    scaler = amp.GradScaler("cuda", enabled=use_amp)
+    scaler = amp.GradScaler("cuda", enabled=use_amp_scaler)
     logging.info(f"Automatic Mixed Precision (AMP) {'enabled' if use_amp else 'disabled'}.")
+    logging.info(f"Automatic Mixed Precision (AMP) Scaler {'enabled' if use_amp_scaler else 'disabled'}.")
     
     eta_min = lr * 2e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=eta_min)
@@ -167,12 +170,15 @@ def train_ddpm(args):
             if hasattr(model, 'global_step'):
                 model.global_step = epoch * l + i
 
-            with amp.autocast(device_type=device, dtype=torch.float16, enabled=use_amp):
+            with amp.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_amp):
                 predicted_noise = model(x_t, t)
                 loss: torch.Tensor = mse(noise, predicted_noise)
 
             optimizer.zero_grad()
             scaler.scale(loss).backward()
+            
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
             
             # --- Monitor gradient norm ---
             total_norm = 0
