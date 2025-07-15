@@ -9,7 +9,7 @@ import torch
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
-gen_path = "./results/generated_hpo_malignant_samples.npy"
+gen_path = "./results/malignant_epochfinal_ddim.npy"
 dataset_path = "./datasets/malignant_datas.npy"
 
 def evaluate(generated_path: str, original_path: str):

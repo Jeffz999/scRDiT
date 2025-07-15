@@ -2,7 +2,7 @@ import torch
 from tqdm import tqdm
 from unet import Unet1d
 import logging
-from diffusers import DPMSolverMultistepScheduler
+from diffusers import DPMSolverMultistepScheduler, DDIMScheduler
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
@@ -15,16 +15,24 @@ class DiffusionGene:
         # --- NEW: Initialize a Hugging Face Diffusers Scheduler ---
         # We replace the manual beta schedule with a modern scheduler.
         # DPMSolverMultistepScheduler is a great choice for speed and quality.
-        self.scheduler = DPMSolverMultistepScheduler(
+        # self.scheduler = DPMSolverMultistepScheduler(
+        #     beta_start=0.0001,
+        #     beta_end=0.02,
+        #     beta_schedule="linear",
+        #     num_train_timesteps=1000,
+        #     # For this model, which predicts noise (epsilon), this setting is standard.
+        #     prediction_type="epsilon",
+        #     # This corresponds to the "sigma_shift" in SD3's configs
+        #     trained_betas=None,
+        # )
+        self.scheduler = DDIMScheduler(
             beta_start=0.0001,
             beta_end=0.02,
             beta_schedule="linear",
             num_train_timesteps=1000,
-            # For this model, which predicts noise (epsilon), this setting is standard.
             prediction_type="epsilon",
-            # This corresponds to the "sigma_shift" in SD3's configs
             trained_betas=None,
-        )
+        ) 
 
     def noise_genes(self, x, t):
         """Add noise to the genes using the scheduler's method."""
@@ -38,7 +46,7 @@ class DiffusionGene:
         """Generate random timesteps for training."""
         return torch.randint(low=0, high=self.scheduler.config.num_train_timesteps, size=(n,), device=self.device)
 
-    def sample(self, model, n: int, num_inference_steps: int = 25):
+    def sample(self, model, n: int, num_inference_steps: int = 25, clamp: bool = True):
         """
         --- NEW: Modern sampling method using the diffusers scheduler ---
         This method replaces the old `sample` and `sample_ddim` methods.
@@ -79,6 +87,9 @@ class DiffusionGene:
                 # 3. Use the scheduler's `step` method to compute the previous sample.
                 # The scheduler's step function itself expects the scalar timestep `t`.
                 x = self.scheduler.step(predicted_noise, t, x).prev_sample
+        if clamp:
+            logging.info("Clamping generated samples to be non-negative.")
+            x = torch.clamp(x, min=0.0)
 
         model.train()
         return x.cpu()

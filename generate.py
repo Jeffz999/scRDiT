@@ -45,10 +45,15 @@ def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.
 
     logging.info(f"Generating {amount} samples with {inference_steps} inference steps...")
     with torch.no_grad():
-        generated_samples = diffusion.sample(model, n=amount, num_inference_steps=inference_steps)
+        generated_samples = diffusion.sample(
+            model,
+            n=amount,
+            num_inference_steps=inference_steps,
+            clamp=True
+        )
     
     # Squeeze the channel dimension before saving
-    generated_samples = generated_samples.squeeze(1).cpu().numpy()
+    generated_samples = generated_samples.cpu().squeeze(1).numpy()
 
     # Ensure the directory for the save_path exists
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -65,7 +70,7 @@ if __name__ == '__main__':
     model_checkpoint_path = 'ckpts/malignant/malignant_epochfinal.pt'
 
     # 2. Set the path where you want to save the generated samples
-    output_save_path = 'results/malignant_epochfinal.npy'
+    output_save_path = 'results/malignant_epochfinal_ddim.npy'
 
     # 3. Choose the model structure that matches your checkpoint
     # This must be the same as the one used during training.
@@ -74,7 +79,7 @@ if __name__ == '__main__':
 
     # 4. Set the number of samples and inference steps
     num_samples_to_generate = 1024
-    dpm_solver_steps = 30
+    dpm_solver_steps = 100
     # =====================
 
     generate_samples(

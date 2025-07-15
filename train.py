@@ -16,7 +16,7 @@ from collections import OrderedDict
 # Run this file to train your model.
 # Change training parameters in settings.py.
 use_amp = True
-use_amp_scaler = False
+use_amp_scaler = True
 max_norm = 5.0
 
 # Configure logging
