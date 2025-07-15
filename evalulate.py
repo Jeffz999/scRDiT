@@ -2,13 +2,18 @@ import numpy as np
 import argparse
 import logging
 from settings import args
-from metrics import calculate_mmd, calculate_w_dist, calculate_kl_div
+from metrics import calculate_w_dist, calculate_kl_div
+from definitions.mmd_loss import MMDLoss
+import torch
 
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
+gen_path = "./results/generated_hpo_malignant_samples.npy"
+dataset_path = "./datasets/malignant_datas.npy"
+
 def evaluate(generated_path: str, original_path: str):
-    """
+    """s
     Calculates and prints evaluation metrics by comparing generated data to original data.
 
     Args:
@@ -28,6 +33,9 @@ def evaluate(generated_path: str, original_path: str):
     except FileNotFoundError:
         logging.error(f"Original dataset not found at {original_path}. Check the path in settings.py.")
         return
+
+    generated_samples = generated_samples.astype(np.float32)
+    original_samples = original_samples.astype(np.float32)
 
     # --- Preprocessing for Fair Comparison ---
     # The loader transforms zeros to -10. We must reverse this for the original data.
@@ -52,8 +60,7 @@ def evaluate(generated_path: str, original_path: str):
 
     # --- Calculate Metrics ---
     logging.info("Calculating Maximum Mean Discrepancy (MMD)...")
-    # Using 'batch' method for MMD is memory-efficient for large datasets
-    mmd_score = calculate_mmd(generated_samples, original_samples, method='batch', batch_size=100)
+    mmd_score = MMDLoss().forward(torch.from_numpy(generated_samples), torch.from_numpy(original_samples))
 
     logging.info("Calculating Wasserstein Distance (on flattened data)...")
     w_dist_score = calculate_w_dist(generated_samples, original_samples, method='flatten')
@@ -74,13 +81,13 @@ def evaluate(generated_path: str, original_path: str):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Evaluate generated scRNA-seq data against an original dataset.")
-    parser.add_argument(
-        "generated_path",
-        type=str,
-        help="Path to the generated samples .npy file (output from generate.py)."
-    )
-    cli_args = parser.parse_args()
-
+    # parser = argparse.ArgumentParser(description="Evaluate generated scRNA-seq data against an original dataset.")
+    # parser.add_argument(
+    #     "generated_path",
+    #     type=str,
+    #     help="Path to the generated samples .npy file (output from generate.py)."
+    # )
+    # cli_args = parser.parse_args()
+    
     # The path to the original data is sourced from settings.py for consistency
-    evaluate(cli_args.generated_path, args.dataset_path)
+    evaluate(gen_path, dataset_path)

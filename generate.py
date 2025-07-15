@@ -62,10 +62,10 @@ if __name__ == '__main__':
     # === Configuration ===
     # 1. Set the path to your trained model checkpoint
     # This should be a .pt file from your "ckpts/your_run_name/" directory
-    model_checkpoint_path = 'ckpts/hpo/SCan_5/trial_9/ckpt_epoch799.pt'
+    model_checkpoint_path = 'ckpts/malignant/malignant_epochfinal.pt'
 
     # 2. Set the path where you want to save the generated samples
-    output_save_path = 'results/generated_hpo_malignant_samples.npy'
+    output_save_path = 'results/malignant_epochfinal.npy'
 
     # 3. Choose the model structure that matches your checkpoint
     # This must be the same as the one used during training.

@@ -17,7 +17,7 @@ from collections import OrderedDict
 # Change training parameters in settings.py.
 use_amp = True
 use_amp_scaler = False
-max_norm = 2.0
+max_norm = 5.0
 
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
