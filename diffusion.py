@@ -46,7 +46,7 @@ class DiffusionGene:
         """Generate random timesteps for training."""
         return torch.randint(low=0, high=self.scheduler.config.num_train_timesteps, size=(n,), device=self.device)
 
-    def sample(self, model, n: int, num_inference_steps: int = 25, clamp: bool = True):
+    def sample(self, model, n: int, num_inference_steps: int = 25, clamp: bool = True, eta=1.0):
         """
         --- NEW: Modern sampling method using the diffusers scheduler ---
         This method replaces the old `sample` and `sample_ddim` methods.
@@ -86,7 +86,7 @@ class DiffusionGene:
 
                 # 3. Use the scheduler's `step` method to compute the previous sample.
                 # The scheduler's step function itself expects the scalar timestep `t`.
-                x = self.scheduler.step(predicted_noise, t, x).prev_sample
+                x = self.scheduler.step(predicted_noise, t, x, eta=eta).prev_sample
         if clamp:
             logging.info("Clamping generated samples to be non-negative.")
             x = torch.clamp(x, min=0.0)
