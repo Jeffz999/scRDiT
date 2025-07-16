@@ -19,7 +19,7 @@ from transformer import DiT
 from settings import args
 
 use_amp = True
-use_amp_scaler = False
+use_amp_scaler = True
 
 # --- Configure Logging ---
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
@@ -29,6 +29,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 # --- DiT Model Configurations ---
 # A smaller set of models to test individually
 DIT_CONFIGS = {
+    "scrdit_match": {"depth": 3, "hidden_size": 768, "patch_size": 10, "num_heads": 8},
     "S_4": {"depth": 8, "hidden_size": 384, "patch_size": 4, "num_heads": 6},
     "S_8": {"depth": 8, "hidden_size": 384, "patch_size": 8, "num_heads": 6},
     "SCan_5": {"depth": 8, "hidden_size": 768, "patch_size": 5, "num_heads": 8},
