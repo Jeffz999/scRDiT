@@ -59,7 +59,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
     # Optuna will now only optimize the learning rate.
     lr = trial.suggest_float("lr", 1e-6, 1e-2, log=True)
     
-    max_norm = trial.suggest_float("max_norm", 0.5, 10.0, log=True)
+    max_norm = 2.0
     
     model_params = DIT_CONFIGS[model_config_name]
     

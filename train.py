@@ -73,7 +73,7 @@ def requires_grad(model, flag=True):
 
 def train_ddpm(args):
     """
-    Main training function with EMA implementation.
+    Main training function with EMA implementation and weighted loss.
 
     Args:
         args: An object containing training settings and parameters.
@@ -92,7 +92,9 @@ def train_ddpm(args):
     dataloader: DataLoader = cell_dataloader
     lr = args.lr
     optimizer: optim.Optimizer = optim.AdamW(model.parameters(), lr=lr)
-    mse: nn.MSELoss = nn.MSELoss()
+    
+    # --- REMOVED: We will calculate loss manually for weighting ---
+    # mse: nn.MSELoss = nn.MSELoss()
     
     scaler = amp.GradScaler("cuda", enabled=use_amp_scaler)
     logging.info(f"Automatic Mixed Precision (AMP) {'enabled' if use_amp else 'disabled'}.")
@@ -141,16 +143,10 @@ def train_ddpm(args):
 
     l = len(dataloader)
     
-    """
-    # Needed for deep copy?
-    update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
-    model.train()  # important! This enables embedding dropout for classifier-free guidance
-    ema.eval()  # EMA model should always be in eval mode
-    """
+    # --- NEW: Define the weight for non-zero values ---
+    non_zero_weight = 50.0
+    logging.info(f"Using weighted loss. Weight for non-zero values: {non_zero_weight}")
 
-    # --- NEW: Enable detailed logging in the model ---
-    # This assumes the model has 'log_stats', 'writer', and 'global_step' attributes.
-    # This is implemented in the updated DiT class in transformer.py
     if hasattr(model, 'log_stats'):
         logging.info("Enabling detailed model statistics logging to TensorBoard.")
         model.log_stats = True
@@ -172,7 +168,17 @@ def train_ddpm(args):
 
             with amp.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_amp):
                 predicted_noise = model(x_t, t)
-                loss: torch.Tensor = mse(noise, predicted_noise)
+                
+                # --- NEW: Weighted Loss Calculation ---
+                # Create a weight map. In the preprocessed data, original zeros are now -1.0.
+                # We give a higher weight to the positions that were NOT originally zero.
+                weight_map = torch.ones_like(genes)
+                # The condition `genes != -1.0` identifies the non-zero values.
+                weight_map[genes != -1.0] = non_zero_weight
+                
+                # Calculate the weighted squared error and take the mean.
+                loss = torch.mean(weight_map * (noise - predicted_noise) ** 2)
+                # --- END NEW ---
 
             optimizer.zero_grad()
             scaler.scale(loss).backward()
@@ -194,9 +200,8 @@ def train_ddpm(args):
             # --- EMA Implementation: Update EMA model after each step ---
             update_ema(ema_model, model)
 
-            # --- Log metrics to console and TensorBoard ---
-            pbar.set_postfix(MSE=loss.item(), GradNorm=total_norm)
-            logger.add_scalar("Loss/MSE", loss.item(), global_step=epoch * l + i)
+            pbar.set_postfix(WeightedMSE=loss.item(), GradNorm=total_norm)
+            logger.add_scalar("Loss/WeightedMSE", loss.item(), global_step=epoch * l + i)
             logger.add_scalar("Training/Gradient_Norm", total_norm, global_step=epoch * l + i)
             epoch_loss_list.append(loss.item())
 
@@ -205,8 +210,7 @@ def train_ddpm(args):
         
         avg_epoch_loss: float = sum(epoch_loss_list) / len(epoch_loss_list)
         logging.info(f"Epoch {epoch} finished. Average Loss: {avg_epoch_loss:.6f}")
-        logger.add_scalar("Loss/Epoch_Avg_MSE", avg_epoch_loss, global_step=epoch)
-
+        logger.add_scalar("Loss/Epoch_Avg_WeightedMSE", avg_epoch_loss, global_step=epoch)
         # --- EMA Implementation: Modified Checkpoint Saving ---
         if (epoch + 1) % args.save_frequency == 0:
             save_checkpoint(model, ema_model, optimizer, scaler, epoch, run_name)

@@ -54,6 +54,34 @@ def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.
     
     # Squeeze the channel dimension before saving
     generated_samples = generated_samples.cpu().squeeze(1).numpy()
+    
+    # --- NEW: Reverse the preprocessing to get data back to original scale ---
+    logging.info("Reversing preprocessing to transform data back to original scale...")
+    
+    # 1. Load the normalization statistics
+    stats_path = 'data_stats.npy'
+    try:
+        stats = np.load(stats_path, allow_pickle=True).item()
+        data_min, data_max = stats['min'], stats['max']
+        logging.info(f"Loaded normalization stats: min={data_min:.4f}, max={data_max:.4f}")
+    except FileNotFoundError:
+        logging.error(f"Error: Normalization stats file not found at '{stats_path}'.")
+        logging.error("Please run train.py first to create this file, or ensure it's in the correct directory.")
+        return
+
+    # 2. De-normalize from [-1, 1] back to the log-transformed range
+    generated_samples = (generated_samples + 1) / 2 * (data_max - data_min) + data_min
+    
+    # 3. Reverse the log1p transformation
+    generated_samples = np.expm1(generated_samples)
+    
+    # --- MODIFIED: Enforce sparsity by thresholding ---
+    # This is the crucial fix. Any value smaller than the threshold is set to 0.
+    # This value might need tuning, but 1e-5 is a robust starting point.
+    threshold = 1e-3
+    generated_samples[generated_samples < threshold] = 0
+    logging.info(f"Enforced sparsity by setting all values < {threshold} to 0.")
+    # --- END MODIFICATION ---
 
     # Ensure the directory for the save_path exists
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -70,7 +98,7 @@ if __name__ == '__main__':
     model_checkpoint_path = 'ckpts/malignant/malignant_epochfinal.pt'
 
     # 2. Set the path where you want to save the generated samples
-    output_save_path = 'results/malignant_epochfinal_ddim3.npy'
+    output_save_path = 'results/malignant_epochfinal_dpmv2_1.npy'
 
     # 3. Choose the model structure that matches your checkpoint
     # This must be the same as the one used during training.
@@ -79,7 +107,7 @@ if __name__ == '__main__':
 
     # 4. Set the number of samples and inference steps
     num_samples_to_generate = 1024
-    dpm_solver_steps = 100
+    dpm_solver_steps = 30
     # =====================
 
     generate_samples(

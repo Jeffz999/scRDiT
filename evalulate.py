@@ -9,7 +9,7 @@ import torch
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
-gen_path = "./results/malignant_epochfinal_ddim3_noema.npy"
+gen_path = "./results/malignant_epochfinal_dpmv2_1.npy"
 dataset_path = "./datasets/malignant_datas.npy"
 
 def evaluate(generated_path: str, original_path: str):
@@ -36,12 +36,6 @@ def evaluate(generated_path: str, original_path: str):
 
     generated_samples = generated_samples.astype(np.float32)
     original_samples = original_samples.astype(np.float32)
-
-    # --- Preprocessing for Fair Comparison ---
-    # The loader transforms zeros to -10. We must reverse this for the original data.
-    if -10 in original_samples:
-        logging.info("Reversing the 'zero-negation' (-10 -> 0) on the original dataset for fair comparison.")
-        original_samples[original_samples == -10.] = 0.
 
     # Ensure generated samples are 2D
     if generated_samples.ndim == 3:

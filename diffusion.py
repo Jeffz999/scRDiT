@@ -15,25 +15,24 @@ class DiffusionGene:
         # --- NEW: Initialize a Hugging Face Diffusers Scheduler ---
         # We replace the manual beta schedule with a modern scheduler.
         # DPMSolverMultistepScheduler is a great choice for speed and quality.
-        # self.scheduler = DPMSolverMultistepScheduler(
-        #     beta_start=0.0001,
-        #     beta_end=0.02,
-        #     beta_schedule="linear",
-        #     num_train_timesteps=1000,
-        #     # For this model, which predicts noise (epsilon), this setting is standard.
-        #     prediction_type="epsilon",
-        #     # This corresponds to the "sigma_shift" in SD3's configs
-        #     trained_betas=None,
-        # )
-        self.scheduler = DDIMScheduler(
+        self.scheduler = DPMSolverMultistepScheduler(
             beta_start=0.0001,
             beta_end=0.02,
             beta_schedule="linear",
             num_train_timesteps=1000,
             prediction_type="epsilon",
             trained_betas=None,
-            clip_sample=False
-        ) 
+            solver_order=3                          # TODO: when switching to cfg gen use solver order 2
+        )
+        # self.scheduler = DDIMScheduler(
+        #     beta_start=0.0001,
+        #     beta_end=0.02,
+        #     beta_schedule="linear",
+        #     num_train_timesteps=1000,
+        #     prediction_type="epsilon",
+        #     trained_betas=None,
+        #     clip_sample=False
+        # ) 
 
     def noise_genes(self, x, t):
         """Add noise to the genes using the scheduler's method."""
@@ -58,7 +57,7 @@ class DiffusionGene:
             num_inference_steps: How many steps to run the reverse diffusion.
                                  Fewer steps are much faster. (e.g., 20-50).
         """
-        logging.info(f"Sampling {n} new genes with DDIM...")
+        logging.info(f"Sampling {n} new genes with Sampler...")
         model.eval()
 
         # Set the number of inference steps. This is a key parameter for speed vs. quality.
@@ -87,10 +86,11 @@ class DiffusionGene:
 
                 # 3. Use the scheduler's `step` method to compute the previous sample.
                 # The scheduler's step function itself expects the scalar timestep `t`.
-                x = self.scheduler.step(predicted_noise, t, x, eta=eta).prev_sample
+                x = self.scheduler.step(predicted_noise, t, x).prev_sample
+                #x = self.scheduler.step(predicted_noise, t, x, eta=eta).prev_sample
         if clamp:
-            logging.info("Clamping generated samples to be non-negative.")
-            x = torch.clamp(x, min=0.0)
+            logging.info("Clamping generated samples to [-1, 1] range.")
+            x = torch.clamp(x, min=-1.0, max=1.0)
 
         model.train()
         return x.cpu()

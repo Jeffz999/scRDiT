@@ -5,8 +5,25 @@ from settings import args
 
 datapath = args.dataset_path
 data = np.load(datapath, allow_pickle=True).astype(np.float32)
-data[data == 0.] = -10.
 
+
+# 1. Apply log1p transformation
+# This handles sparsity well, as log1p(0) = 0
+print("Applying log1p transformation...")
+data = np.log1p(data)
+
+# 2. Normalize the data to the range [-1, 1]
+print("Normalizing data to [-1, 1]...")
+data_min = np.min(data)
+data_max = np.max(data)
+data = 2 * (data - data_min) / (data_max - data_min) - 1
+
+# 3. Save the min/max statistics for reversing the transformation later
+stats_path = 'data_stats.npy'
+print(f"Saving normalization stats (min/max) to {stats_path}...")
+np.save(stats_path, {'min': data_min, 'max': data_max})
+print("Preprocessing complete.")
+# --- END NEW ---
 
 class CellDataset(Dataset):
 
