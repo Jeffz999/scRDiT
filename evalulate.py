@@ -9,11 +9,11 @@ import torch
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
-gen_path = "./results/malignant_epochfinal_dpmv2_1.npy"
+gen_path = "results/malignant_sbits_pdpm1.npy"
 dataset_path = "./datasets/malignant_datas.npy"
 
 def evaluate(generated_path: str, original_path: str):
-    """s
+    """
     Calculates and prints evaluation metrics by comparing generated data to original data.
 
     Args:

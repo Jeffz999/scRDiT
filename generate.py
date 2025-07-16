@@ -7,12 +7,11 @@ from transformer import DiT
 from unet import Unet1d
 import logging
 
-# Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
 def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.Module, amount: int, inference_steps: int):
     """
-    Generates and saves synthetic gene expression data using a trained model.
+    Generates and saves synthetic gene expression data using a trained 2 channel model.
 
     Args:
         model_path (str): Path to the trained model checkpoint (.pt file).
@@ -41,10 +40,12 @@ def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.
     
     model.eval()
 
-    diffusion = DiffusionGene(gene_size=args.gene_size, device=device)
+    # --- MODIFIED: Initialize diffusion with 2 channels ---
+    diffusion = DiffusionGene(gene_size=args.gene_size, device=device, num_channels=2)
 
     logging.info(f"Generating {amount} samples with {inference_steps} inference steps...")
     with torch.no_grad():
+        # Generated samples will have shape (N, 2, gene_size)
         generated_samples = diffusion.sample(
             model,
             n=amount,
@@ -52,68 +53,66 @@ def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.
             clamp=True
         )
     
-    # Squeeze the channel dimension before saving
-    generated_samples = generated_samples.cpu().squeeze(1).numpy()
+    generated_samples = generated_samples.cpu().numpy()
+
+    # --- NEW: Decode the 2-channel output ---
+    logging.info("Decoding 2-channel output...")
     
-    # --- NEW: Reverse the preprocessing to get data back to original scale ---
-    logging.info("Reversing preprocessing to transform data back to original scale...")
-    
-    # 1. Load the normalization statistics
-    stats_path = 'data_stats.npy'
+    # 1. Separate the expression and mask channels
+    generated_expressions = generated_samples[:, 0, :]
+    generated_mask = generated_samples[:, 1, :]
+
+    # 2. Load the expression normalization statistics
+    stats_path = 'data_stats_sparsity_bits.npy'
     try:
         stats = np.load(stats_path, allow_pickle=True).item()
         data_min, data_max = stats['min'], stats['max']
-        logging.info(f"Loaded normalization stats: min={data_min:.4f}, max={data_max:.4f}")
+        logging.info(f"Loaded expression stats: min={data_min:.4f}, max={data_max:.4f}")
     except FileNotFoundError:
-        logging.error(f"Error: Normalization stats file not found at '{stats_path}'.")
-        logging.error("Please run train.py first to create this file, or ensure it's in the correct directory.")
+        logging.error(f"Error: Stats file not found at '{stats_path}'. Please run train.py first.")
         return
 
-    # 2. De-normalize from [-1, 1] back to the log-transformed range
-    generated_samples = (generated_samples + 1) / 2 * (data_max - data_min) + data_min
+    # 3. De-normalize the expression channel from [-1, 1] back to the log-transformed range
+    generated_expressions = (generated_expressions + 1) / 2 * (data_max - data_min) + data_min
     
-    # 3. Reverse the log1p transformation
-    generated_samples = np.expm1(generated_samples)
+    # 4. De-normalize the mask channel from [-1, 1] back to the [0, 1] range
+    generated_mask = (generated_mask + 1) / 2.0
     
-    # --- MODIFIED: Enforce sparsity by thresholding ---
-    # This is the crucial fix. Any value smaller than the threshold is set to 0.
-    # This value might need tuning, but 1e-5 is a robust starting point.
-    threshold = 1e-3
-    generated_samples[generated_samples < threshold] = 0
-    logging.info(f"Enforced sparsity by setting all values < {threshold} to 0.")
-    # --- END MODIFICATION ---
+    # 5. Create a final binary mask by thresholding the generated mask
+    # This is the key step for enforcing sparsity.
+    final_binary_mask = (generated_mask > 0.5).astype(np.float32)
+    
+    # 6. Apply the final mask to the expression data.
+    # This sets all genes where the mask is 0 to be 0.
+    final_expressions = generated_expressions * final_binary_mask
+    
+    # 7. Reverse the log1p transformation on the now-sparse data
+    final_expressions = np.expm1(final_expressions)
+    
+    # 8. Final clamp to ensure non-negativity
+    final_expressions[final_expressions < 0] = 0
+    logging.info("Decoding complete.")
+    # --- END NEW ---
 
     # Ensure the directory for the save_path exists
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    logging.info(f"Saving {generated_samples.shape[0]} samples to {save_path}")
-    np.save(save_path, generated_samples)
+    logging.info(f"Saving {final_expressions.shape[0]} samples to {save_path}")
+    np.save(save_path, final_expressions)
     logging.info("Generation complete.")
 
 
 if __name__ == '__main__':
-    # === Configuration ===
-    # 1. Set the path to your trained model checkpoint
-    # This should be a .pt file from your "ckpts/your_run_name/" directory
     model_checkpoint_path = 'ckpts/malignant/malignant_epochfinal.pt'
-
-    # 2. Set the path where you want to save the generated samples
-    output_save_path = 'results/malignant_epochfinal_dpmv2_1.npy'
-
-    # 3. Choose the model structure that matches your checkpoint
-    # This must be the same as the one used during training.
+    output_save_path = 'results/malignant_sbits_pdpm1.npy'
     model_architecture = args.model
-    # model_architecture = Unet1d()
-
-    # 4. Set the number of samples and inference steps
     num_samples_to_generate = 1024
-    dpm_solver_steps = 30
-    # =====================
+    solver_steps = 50
 
     generate_samples(
         model_path=model_checkpoint_path,
         save_path=output_save_path,
         model_structure=model_architecture,
         amount=num_samples_to_generate,
-        inference_steps=dpm_solver_steps
+        inference_steps=solver_steps
     )

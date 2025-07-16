@@ -7,7 +7,7 @@ import pandas as pd
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
 # Default paths, can be overridden by command-line arguments
-generated_path = "./results/malignant_epochfinal_dpmv2_1.npy" 
+generated_path = "results/malignant_sbits_pdpm1.npy" 
 original_path = "datasets/malignant_datas.npy"
 
 def calculate_descriptive_stats(data: np.ndarray, name: str) -> (dict, dict):

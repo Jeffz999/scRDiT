@@ -16,5 +16,6 @@ job_output.txt
 
 job.slurm
 
+data_stats_sparsity_bits.npy
 
 data_stats.npy
