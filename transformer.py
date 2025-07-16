@@ -54,34 +54,26 @@ class TimestepEmbedder(nn.Module):
         return t_emb
 
 
-
 class PatchEmbed(nn.Module):
     """
-    Patch Embedding
+    Patch Embedding for 1D data.
     """
-
     def __init__(self, img_size=2000, patch_size=10, in_c=1, embed_dim=768, norm_layer=None, bias=False):
         super().__init__()
-        img_size = (img_size, 1)
-        patch_size = (patch_size, 1)
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
-        self.num_patches = self.grid_size[0] * self.grid_size[1]
-        self.proj = nn.Conv2d(in_c, embed_dim, kernel_size=patch_size, stride=patch_size, bias=bias)
+        # Ensure img_size and patch_size are treated as 1D
+        self.img_size = (img_size,)
+        self.patch_size = (patch_size,)
+        self.grid_size = (img_size // patch_size,)
+        self.num_patches = self.grid_size[0]
+        # Use Conv1d for 1D data
+        self.proj = nn.Conv1d(in_c, embed_dim, kernel_size=patch_size, stride=patch_size, bias=bias)
         self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
 
     def forward(self, x):
-        x = x[:, :, :, None]
-        B, C, H, W = x.shape
-        assert H == self.img_size[0] and W == self.img_size[1], \
-            f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-
-        # flatten: [B, C, H, W] -> [B, C, HW]
-        # transpose: [B, C, HW] -> [B, HW, C]
+        B, C, L = x.shape
+        assert L == self.img_size[0], f"Input length ({L}) doesn't match model ({self.img_size[0]})."
         x = self.proj(x)
-        x = x.flatten(2)
-        x = x.transpose(1, 2)
+        x = x.transpose(1, 2)  # [B, C, L] -> [B, L, C]
         x = self.norm(x)
         return x
 
@@ -261,7 +253,7 @@ class DiT(nn.Module):
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
 
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.x_embedder.num_patches))  # (200, 768)
+        pos_embed = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
         w = self.x_embedder.proj.weight.data
@@ -288,21 +280,17 @@ class DiT(nn.Module):
 
     def unpatchify(self, x):
         """
-        x: (N, T, patch_size**2 * C)
-        imgs: (N, H, W, C)
+        x: (N, T, patch_size * C)
+        imgs: (N, C, L)
         """
-        # x: [16, 200, 10]
         c = self.out_channels
-        ph = self.x_embedder.patch_size[0]  # 10
-        pw = 1
-        h = x.shape[1]
-        w = 1
-        # h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
+        p = self.patch_size
+        l_p = self.x_embedder.num_patches
+        assert l_p == x.shape[1]
 
-        x = x.reshape(shape=(x.shape[0], h, w, ph, pw, c))  # [16, 200, 1, 10, 1, 1]
-        x = torch.einsum('nhwpqc->nchpwq', x)  # [16, 1, 200, 10, 1, 1]
-        imgs = x.reshape(shape=(x.shape[0], c, h * ph))  # [16, 1, 2000]
+        x = x.reshape(shape=(x.shape[0], l_p, p, c))
+        x = torch.einsum('nlpc->nclp', x)
+        imgs = x.reshape(shape=(x.shape[0], c, l_p * p))
         return imgs
 
     def forward(self, x, t):
@@ -358,41 +346,13 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = np.concatenate([emb_sin, emb_cos], axis=1)
     return emb
 
-def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False, extra_tokens=0):
-    """
-    grid_size: int of the grid height and width
-    return:
-    pos_embed: [grid_size*grid_size, embed_dim] or [1+grid_size*grid_size, embed_dim] (w/ or w/o cls_token)
-    """
-    grid_h = np.arange(grid_size, dtype=np.float32)
-    grid_w = np.arange(1, dtype=np.float32)
-    grid = np.meshgrid(grid_w, grid_h)  # here w goes first  [2, 200, 1]
-    grid = np.stack(grid, axis=0)  # (2, 200, 1)
-
-    grid = grid.reshape([2, 1, grid_size, 1])  # (2, 1, 200, 1)
-    pos_embed = get_2d_sincos_pos_embed_from_grid(embed_dim, grid)
-    if cls_token and extra_tokens > 0:
-        pos_embed = np.concatenate([np.zeros([extra_tokens, embed_dim]), pos_embed], axis=0)  # (200, 768)
-    return pos_embed
-
-
-def get_2d_sincos_pos_embed_from_grid(embed_dim, grid):
-    assert embed_dim % 2 == 0
-
-    # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[0])  # (H*W, D/2)
-    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid[1])  # (H*W, D/2)
-
-    emb = np.concatenate([emb_h, emb_w], axis=1) # (H*W, D)
-    return emb
-
 
 if __name__ == '__main__':
     # Test code.
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     t = torch.randint(0, 1000, (16,)).to(device)
     x = torch.randn((16, 1, 2000)).to(device)
-    dit = DiT(depth=12, hidden_size=768, patch_size=10, num_heads=12).to(device)
+    dit = DiT(depth=24, hidden_size=768*2, patch_size=4, num_heads=24).to(device)
     
     # --- Test new logging ---
     from torch.utils.tensorboard import SummaryWriter

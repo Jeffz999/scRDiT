@@ -6,7 +6,7 @@ import pandas as pd
 # Configure logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
-generated_path = "./results/malignant_samples_old.npy"
+generated_path = "./results/malignant_epochfinal_ddim3.npy"
 original_path = "datasets/malignant_datas.npy"
 
 def calculate_descriptive_stats(data: np.ndarray, name: str) -> dict:

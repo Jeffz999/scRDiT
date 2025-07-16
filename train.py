@@ -98,7 +98,7 @@ def train_ddpm(args):
     logging.info(f"Automatic Mixed Precision (AMP) {'enabled' if use_amp else 'disabled'}.")
     logging.info(f"Automatic Mixed Precision (AMP) Scaler {'enabled' if use_amp_scaler else 'disabled'}.")
     
-    eta_min = lr * 2e-2
+    eta_min = lr * 1e-2
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=eta_min)
     
     diffusion = DiffusionGene(gene_size=args.gene_size, device=device)

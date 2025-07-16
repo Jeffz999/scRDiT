@@ -56,7 +56,7 @@ def objective(trial: optuna.Trial, model_config_name: str) -> float:
 
     # --- 1. Suggest Hyperparameters ---
     # Optuna will now only optimize the learning rate.
-    lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
+    lr = trial.suggest_float("lr", 1e-6, 1e-2, log=True)
     
     max_norm = trial.suggest_float("max_norm", 0.5, 10.0, log=True)
     

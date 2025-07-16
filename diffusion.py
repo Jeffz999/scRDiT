@@ -32,6 +32,7 @@ class DiffusionGene:
             num_train_timesteps=1000,
             prediction_type="epsilon",
             trained_betas=None,
+            clip_sample=False
         ) 
 
     def noise_genes(self, x, t):
@@ -57,7 +58,7 @@ class DiffusionGene:
             num_inference_steps: How many steps to run the reverse diffusion.
                                  Fewer steps are much faster. (e.g., 20-50).
         """
-        logging.info(f"Sampling {n} new genes with DPMSolverMultistepScheduler...")
+        logging.info(f"Sampling {n} new genes with DDIM...")
         model.eval()
 
         # Set the number of inference steps. This is a key parameter for speed vs. quality.
