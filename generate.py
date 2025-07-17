@@ -104,10 +104,10 @@ def generate_samples(model_path: str, save_path: str, model_structure: torch.nn.
 
 if __name__ == '__main__':
     model_checkpoint_path = 'ckpts/malignant/malignant_epochfinal.pt'
-    output_save_path = 'results/malignant_sbits_pdpm1.npy'
+    output_save_path = 'results/malignant_sbits_unipc_1.npy'
     model_architecture = args.model
     num_samples_to_generate = 1024
-    solver_steps = 50
+    solver_steps = 14
 
     generate_samples(
         model_path=model_checkpoint_path,

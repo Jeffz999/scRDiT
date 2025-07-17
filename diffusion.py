@@ -2,7 +2,7 @@ import torch
 from tqdm import tqdm
 from unet import Unet1d
 import logging
-from diffusers import DPMSolverMultistepScheduler, DDIMScheduler, PNDMScheduler
+from diffusers import DPMSolverMultistepScheduler, DDIMScheduler, PNDMScheduler, UniPCMultistepScheduler
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 
@@ -14,13 +14,25 @@ class DiffusionGene:
         # --- NEW: Number of channels is now a parameter ---
         self.num_channels = num_channels
 
-        self.scheduler = PNDMScheduler(
+        # self.scheduler = PNDMScheduler(
+        #     beta_start=0.0001,
+        #     beta_end=0.02,
+        #     beta_schedule="linear",
+        #     num_train_timesteps=1000,
+        #     prediction_type="epsilon",
+        #     trained_betas=None,            
+        # )
+        
+        self.scheduler = UniPCMultistepScheduler(
             beta_start=0.0001,
             beta_end=0.02,
             beta_schedule="linear",
             num_train_timesteps=1000,
             prediction_type="epsilon",
-            trained_betas=None,            
+            trained_betas=None,
+            thresholding=True,
+            sample_max_value=15,
+            solver_order=3            
         )
         
         # self.scheduler = DDIMScheduler(
